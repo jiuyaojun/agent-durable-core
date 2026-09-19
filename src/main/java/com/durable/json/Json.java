@@ -57,4 +57,22 @@ public final class Json {
             throw new IllegalArgumentException("读取失败: " + json, e);
         }
     }
+
+    /**
+     * 规范化为稳定的字符串形式：对象键按字典序排列，去掉无意义空白。
+     *
+     * 存在的意义：给「审批绑定的参数快照」算指纹时，
+     * {@code {"a":1,"b":2}} 和 {@code { "b": 2, "a": 1 }} 必须得到同一个指纹，
+     * 否则审批会因为我们无法控制的键序变化而误判为「参数被篡改」。
+     */
+    public static String canonical(String json) {
+        try {
+            Object parsed = MAPPER.readValue(json, Object.class);
+            return MAPPER.writer()
+                    .with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+                    .writeValueAsString(parsed);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalArgumentException("无法规范化 JSON: " + json, e);
+        }
+    }
 }

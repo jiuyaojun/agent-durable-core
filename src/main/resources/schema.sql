@@ -53,12 +53,17 @@ CREATE TABLE IF NOT EXISTS host (
 -- 人工审批的中断点。一个 (workflow_id, step_no) 只能有一个中断。
 -- status='PARKED' 等待审批；status='CONSUMED' 已被某次 resume 消费。
 -- CO-c 的落点：抢占用的是条件更新 UPDATE ... WHERE status='PARKED'。
+--
+-- args_hash 是审批绑定的【参数快照指纹】：park 时算一次，执行前再算一次比对。
+-- 不一致说明审批通过后参数被改过（TOCTOU），必须拒绝执行。
 CREATE TABLE IF NOT EXISTS interrupt (
     workflow_id VARCHAR(64)  NOT NULL,
     step_no     INT          NOT NULL,
     status      VARCHAR(16)  NOT NULL,
     consumed_by VARCHAR(64)  NULL,
-    question    JSON         NOT NULL,
+    tool_name   VARCHAR(128) NOT NULL,
+    args        JSON         NOT NULL,
+    args_hash   CHAR(64)     NOT NULL,
     created_at  TIMESTAMP(3) NOT NULL,
     PRIMARY KEY (workflow_id, step_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

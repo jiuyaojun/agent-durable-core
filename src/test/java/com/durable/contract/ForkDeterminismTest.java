@@ -38,7 +38,7 @@ class ForkDeterminismTest {
     void setUp() {
         Db.resetSchema();
         gate = new ApprovalGate(Db.dataSource());
-        gate.park("wf-fd", 0, "{\"action\":\"deleteHost\"}");
+        gate.park("wf-fd", 0, "deleteHost", "{\"target\":\"test-1\"}");
     }
 
     @AfterAll

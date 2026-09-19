@@ -57,7 +57,7 @@ class ConcurrentResumeTest {
     @Test
     @DisplayName("8 个并发 resume 抢同一个挂起中断：恰好 1 个成功，被门控的操作只执行 1 次")
     void concurrentResumesYieldExactlyOneConsumption() throws Exception {
-        gate.park("wf-race", 0, "{\"action\":\"deleteHost\"}");
+        gate.park("wf-race", 0, "deleteHost", "{\"target\":\"test-1\"}");
 
         AtomicInteger effectsFired = new AtomicInteger();
 
@@ -92,7 +92,7 @@ class ConcurrentResumeTest {
     @Test
     @DisplayName("并发分叉：8 个不同 branchId 并发，各自产出独立")
     void concurrentForksProduceIndependentBranches() throws Exception {
-        gate.park("wf-race-fork", 0, "{}");
+        gate.park("wf-race-fork", 0, "deleteHost", "{}");
 
         List<ResumeOutcome> outcomes = race(RACERS, i ->
                 gate.resume(
@@ -112,7 +112,7 @@ class ConcurrentResumeTest {
     @Test
     @DisplayName("并发重复投递同一个 branchId：只开出一个分支")
     void concurrentSameBranchYieldsOneBranch() throws Exception {
-        gate.park("wf-race-same", 0, "{}");
+        gate.park("wf-race-same", 0, "deleteHost", "{}");
 
         List<ResumeOutcome> outcomes = race(RACERS, i ->
                 gate.resume(

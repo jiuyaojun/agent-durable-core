@@ -71,6 +71,15 @@
           <argLine>-Dfile.encoding=UTF-8</argLine>
         </configuration>
       </plugin>
+      <!-- 用于运行演示：mvn -q compile exec:java -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>com.durable.demo.DurableDemo</mainClass>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>

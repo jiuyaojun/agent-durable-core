@@ -42,7 +42,7 @@ class ConsumeOnceTest {
     void setUp() {
         Db.resetSchema();
         gate = new ApprovalGate(Db.dataSource());
-        gate.park("wf-co", 0, "{\"action\":\"deleteHost\"}");
+        gate.park("wf-co", 0, "deleteHost", "{\"target\":\"test-1\"}");
     }
 
     @AfterAll

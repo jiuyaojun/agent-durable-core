@@ -1,6 +1,7 @@
 package com.durable.interrupt;
 
 import com.durable.json.Json;
+import com.durable.util.Hashing;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -33,12 +34,13 @@ public class ApprovalGate {
     private static final int ER_DUP_ENTRY = 1062;
 
     private static final String SQL_PARK =
-            "INSERT INTO interrupt (workflow_id, step_no, status, consumed_by, question, created_at) "
-                    + "VALUES (?, ?, 'PARKED', NULL, ?, ?)";
+            "INSERT INTO interrupt (workflow_id, step_no, status, consumed_by, "
+                    + "tool_name, args, args_hash, created_at) "
+                    + "VALUES (?, ?, 'PARKED', NULL, ?, ?, ?, ?)";
 
     private static final String SQL_SELECT =
-            "SELECT workflow_id, step_no, status, consumed_by, question, created_at "
-                    + "FROM interrupt WHERE workflow_id = ? AND step_no = ?";
+            "SELECT workflow_id, step_no, status, consumed_by, tool_name, args, args_hash, "
+                    + "created_at FROM interrupt WHERE workflow_id = ? AND step_no = ?";
 
     private static final String SQL_CLAIM =
             "UPDATE interrupt SET status = 'CONSUMED', consumed_by = ? "
@@ -70,14 +72,22 @@ public class ApprovalGate {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
     }
 
-    /** 挂起一个中断点，等待人工审批。 */
-    public Interrupt park(String workflowId, int stepNo, String question) {
+    /**
+     * 挂起一个中断点，等待人工审批。
+     *
+     * 记录的是一次**精确的行动**（工具名 + 参数 + 指纹），而不是一个模糊的「可以执行」。
+     * 审批之后、执行之前会用 {@link #verifyBinding} 重新比对指纹。
+     */
+    public Interrupt park(String workflowId, int stepNo, String toolName, String argsJson) {
+        String fingerprint = fingerprint(toolName, argsJson);
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(SQL_PARK)) {
             ps.setString(1, workflowId);
             ps.setInt(2, stepNo);
-            ps.setString(3, question);
-            ps.setTimestamp(4, Timestamp.from(Instant.now()));
+            ps.setString(3, toolName);
+            ps.setString(4, Json.canonical(argsJson));
+            ps.setString(5, fingerprint);
+            ps.setTimestamp(6, Timestamp.from(Instant.now()));
             ps.executeUpdate();
         } catch (SQLException e) {
             if (e.getErrorCode() == ER_DUP_ENTRY) {
@@ -86,6 +96,36 @@ public class ApprovalGate {
             throw new IllegalStateException("挂起中断失败", e);
         }
         return find(workflowId, stepNo).orElseThrow();
+    }
+
+    /**
+     * 参数快照指纹：工具名 + 规范化后的参数。
+     *
+     * 用规范化形式（键按字典序）而不是原始字符串，
+     * 否则 JSON 键序变化会被误判成参数漂移。
+     */
+    public static String fingerprint(String toolName, String argsJson) {
+        Objects.requireNonNull(toolName, "toolName");
+        Objects.requireNonNull(argsJson, "argsJson");
+        return Hashing.sha256(toolName + "\n" + Json.canonical(argsJson));
+    }
+
+    /**
+     * 校验执行时的参数与审批时绑定的快照一致 —— 防 TOCTOU 参数漂移。
+     *
+     * @throws ApprovalDriftException 参数被改过，必须拒绝执行
+     */
+    public void verifyBinding(String workflowId, int stepNo, String toolName, String argsJson) {
+        Interrupt interrupt = find(workflowId, stepNo).orElseThrow(() ->
+                new IllegalStateException("中断不存在: " + workflowId + "/" + stepNo));
+        String actual = fingerprint(toolName, argsJson);
+        if (!actual.equals(interrupt.argsHash())) {
+            throw new ApprovalDriftException(
+                    "审批参数漂移，拒绝执行: " + workflowId + "/" + stepNo
+                            + "；审批的是 [" + interrupt.toolName() + " " + interrupt.args() + "]"
+                            + "，实际要执行 [" + toolName + " " + Json.canonical(argsJson) + "]",
+                    interrupt.argsHash(), actual);
+        }
     }
 
     public Optional<Interrupt> find(String workflowId, int stepNo) {
@@ -102,7 +142,9 @@ public class ApprovalGate {
                         rs.getInt("step_no"),
                         InterruptStatus.valueOf(rs.getString("status")),
                         rs.getString("consumed_by"),
-                        rs.getString("question"),
+                        rs.getString("tool_name"),
+                        rs.getString("args"),
+                        rs.getString("args_hash"),
                         rs.getTimestamp("created_at").toInstant()));
             }
         } catch (SQLException e) {

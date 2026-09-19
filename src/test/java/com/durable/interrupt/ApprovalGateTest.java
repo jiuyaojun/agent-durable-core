@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -29,11 +30,12 @@ class ApprovalGateTest {
     @Test
     @DisplayName("挂起后可以被一次审批消费")
     void parkThenConsume() {
-        gate.park("wf-1", 0, "{\"action\":\"deleteHost\",\"target\":\"prod-1\"}");
+        gate.park("wf-1", 0, "deleteHost", "{\"target\":\"prod-1\"}");
 
         Interrupt parked = gate.find("wf-1", 0).orElseThrow();
         System.out.println("[真实输出] 挂起状态 = " + parked.status()
-                + ", 问题 = " + parked.question());
+                + ", 审批目标 = " + parked.toolName() + " " + parked.args()
+                + ", 指纹 = " + parked.argsHash().substring(0, 16) + "...");
         assertTrue(parked.isParked());
 
         ResumeOutcome outcome = gate.resume(
@@ -52,9 +54,9 @@ class ApprovalGateTest {
     @Test
     @DisplayName("同一中断点重复 park 会被拒绝")
     void parkIsUnique() {
-        gate.park("wf-1", 0, "{}");
+        gate.park("wf-1", 0, "deleteHost", "{}");
         IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> gate.park("wf-1", 0, "{}"));
+                () -> gate.park("wf-1", 0, "deleteHost", "{}"));
         System.out.println("[真实输出] 重复 park 被拒绝: " + ex.getMessage());
     }
 
@@ -75,5 +77,36 @@ class ApprovalGateTest {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
                 new ResumeCommand("wf-1", 0, "r-1", true, null, "yes"));
         System.out.println("[真实输出] 拒绝原因: " + ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("参数指纹与 JSON 键序无关（规范化）")
+    void fingerprintIsOrderIndependent() {
+        String a = ApprovalGate.fingerprint("deleteHost", "{\"a\":1,\"b\":2}");
+        String b = ApprovalGate.fingerprint("deleteHost", "{ \"b\": 2, \"a\": 1 }");
+
+        System.out.println("[真实输出] 指纹A = " + a.substring(0, 16));
+        System.out.println("[真实输出] 指纹B = " + b.substring(0, 16));
+
+        assertEquals(a, b, "键序变化不应被误判为参数漂移");
+    }
+
+    @Test
+    @DisplayName("工具名不同则指纹不同")
+    void fingerprintDependsOnToolName() {
+        String a = ApprovalGate.fingerprint("deleteHost", "{}");
+        String b = ApprovalGate.fingerprint("restartHost", "{}");
+        System.out.println("[真实输出] 不同工具的指纹是否相同 = " + a.equals(b));
+        assertTrue(!a.equals(b));
+    }
+
+    @Test
+    @DisplayName("参数未变时绑定校验通过")
+    void verifyBindingPassesWhenUnchanged() {
+        gate.park("wf-bind", 0, "deleteHost", "{\"target\":\"prod-1\"}");
+
+        assertDoesNotThrow(() ->
+                gate.verifyBinding("wf-bind", 0, "deleteHost", "{\"target\":\"prod-1\"}"));
+        System.out.println("[真实输出] 参数未变：校验通过");
     }
 }
