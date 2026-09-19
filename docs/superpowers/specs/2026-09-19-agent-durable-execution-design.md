@@ -20,13 +20,72 @@
 
 ## 2. 完成定义（Definition of Done）
 
-以论文 [arXiv:2608.03836](https://arxiv.org/abs/2608.03836) 的 **RESUME CONTRACT 六个性质**为准。**六条全过 = 持久化内核完成**；这是范围的上界，不再往上加。
+以论文 [arXiv:2608.03836](https://arxiv.org/abs/2608.03836) 的 **RESUME CONTRACT** 为准。
+**以下定义是逐字提取自论文正文的**（2026-09-19 从 arXiv HTML 全文核对），不是我的转述 —— 测试断言必须与之一致。
 
-> **六性质与审批闸门的关系（避免歧义）**：
-> 六性质定义的是 **`durable-core` 模块的正确性**，它是地基。
-> **审批闸门（§3、§7 第 5 步）不是第七个性质**，它是建在地基上的一个应用层特性 ——
-> 它之所以便宜，是因为**审批挂起 = interrupt，审批通过 = resume**，复用的是同一套机制，不引入新的正确性问题。
-> 所以顺序是：**先把六性质做绿，再加审批**。六性质没绿之前不碰审批。
+### 2.1 六个性质（论文原文定义）
+
+**Property 1 · PC（Prefix continuation）**
+> "Recovery continues from the durably recorded frontier state: execution after recovery begins in the state S_F recorded at frontier F, or in a state re-derived deterministically from the durable log alone that equals S_F."
+> "**Memoized replay conforms**: prefix code **may re-run** during recovery provided **every prefix effect is served from the durable record** (so EO is preserved) and the re-derived state is a pure function of the log."
+
+⚠️ **修正**：我原先以为 PC 要求「跳过已完成的步骤、不重跑」。**论文明确允许重跑前缀代码**，只要①每个前缀副作用都从持久记录里取②状态是日志的纯函数。这条修正让实现简单得多，也更接近真实框架的做法。
+
+**Property 2 · EO（Effect exactly-once）**
+> "For every task t, effect e_t fires **at most once** on a branch across any sequence of interrupts, crashes, and resumes."
+> "As a safety invariant **EO is at-most-once**; the 'exactly' is supplied by pairing with the **liveness obligation**."
+> "EO constrains **observable external effects only**, never message delivery: **an effect that commits while its acknowledgment is lost counts as fired**, and the retry discipline for lost acknowledgments is the **idempotency-key composition**."
+
+⚠️ **关键**：EO 的安全不变式是 **at-most-once**，不是 exactly-once。而且论文直接点明了我们那个崩溃窗口 ——「副作用已提交但确认丢失，算作已触发」，其补救手段就是**幂等键**。
+
+**Property 3 · FD（Fork determinism）**
+> "If resumes carrying **fork intent** with values v₁,…,v_m are addressed to the same interrupt checkpoint, then each branch outcome satisfies o_k = f(v_k) for the branch semantics f; in particular v_j ≠ v₁ ⇒ o_j ≠ o₁ whenever f is injective."
+> "f is the **decision function**: the framework's routing of the supplied value into the gated branch decision, deterministic by construction of the gate."
+
+⚠️ FD 是关于**同一个人工审批点被不同值回答两次**时，应该产生两条不同分支。这是**审批场景**的性质，不是普通的恢复。
+
+**Property 4 · CV（Checkpoint validity）**
+> "Every persisted checkpoint record satisfies the state schema: a write that would persist schema-invalid state is **rejected with an error, not stored**."
+
+⚠️ 论文实测：**LangGraph 1.2.9 会静默持久化 schema 非法的状态**。
+
+**Property 5 · CO（Consume-once）—— 有两个子条款**
+> "**(CO-c, consumption count)** An interrupt is consumed by **at most one resume**."
+> "**(CO-e, effect inertness)** A resume **without** fork intent addressed to a completed run or an already-consumed interrupt — **including byte-identical re-delivery of a prior resume** — is **inert with respect to effects**."
+> "A gate that serves its effect idempotently from the durable record **can consume one human approval twice while the effect count stays at one**, which leaves the **approval trail wrong** and the effect ledger right."
+
+⚠️ **这是全篇最精妙的一点**：如果只做幂等，副作用计数是对的，但**审批记录被消费了两次**——审计轨迹已经错了。所以 CO-c 和 CO-e 必须分开实现、分开测试。
+
+**Property 6 · RD（Recovery determinism）**
+> "The recovery decision (which tasks to skip versus re-execute) is a **function of durable state**: two recoveries from identical durable logs make identical decisions."
+
+### 2.2 附加义务
+
+**Definition 2 · Explicit fork（显式分叉）**
+> "A resume carries fork intent iff it bears a **branch discriminator** distinguishing it from re-delivery of a prior resume: a distinct **resume ordinal**, an explicit **fork flag**, or an address the framework's own documentation designates as branch-creating."
+
+**Property 7 · FI（Fork-intent expressibility）** —— 协议义务，非行为性质
+> "The resume API must make the discriminator of Definition 2 **expressible on the wire**."
+
+**为什么 FI 必须有**：论文指出 FD 与 CO 在**同一个线缆点**上朝相反方向拉扯 ——
+> "FD demands the new value be honored on a new branch, CO demands a stray re-delivery be inert. **Without a discriminator the two are jointly unsatisfiable on identical traffic.**"
+
+### 2.3 验收矩阵
+
+| # | 性质 | 验收方式 | 计划 |
+|---|---|---|---|
+| 1 | **PC** | 崩溃后恢复，前缀副作用从持久记录取；状态是日志的纯函数 | 2 |
+| 2 | **EO** | 副作用触发次数 ≤ 1（含确认丢失窗口） | 2 |
+| 3 | **FD** | 同一审批点用不同值回答，产出不同分支 | 3 |
+| 4 | **CV** | 非法状态的检查点写入被**拒绝并报错**，不落库 | 2 |
+| 5a | **CO-c** | 并发 k 个 resume 抢同一个挂起中断，只有一个成功消费 | 3 |
+| 5b | **CO-e** | 重复投递（字节相同）对副作用无影响 | 3 |
+| 6 | **RD** | 同一份日志恢复两次，决策完全一致 | 2 |
+| 7 | **FI** | resume API 能表达分叉判别符 | 3 |
+
+> **六性质与中断的关系**：PC / EO / CV / RD 不涉及中断，可以先用普通崩溃场景验证（计划 2）；
+> FD / CO / FI 全部围绕**中断（人工审批）**展开，必须等审批闸门建好才能验证（计划 3）。
+> 所以顺序是：**先做无中断的恢复内核，再做中断层**。
 
 | # | 性质 | 含义 | 验收方式 |
 |---|---|---|---|

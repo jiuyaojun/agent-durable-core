@@ -12,13 +12,16 @@
 
 这个项目的做法是：**先用故障注入把这个窗口稳定复现出来，再逐个消灭它。**
 
-当前已复现的缺陷（`DurableExecutorCrashTest` 实测输出）：
+当前进度（计划 2 完成）：
 
 ```
-[真实输出] 崩溃后副作用次数 = 1
-[真实输出] 崩溃后日志行数 = 0
-[真实输出] 重启后副作用总次数 = 2      ← 缺陷：应该是 1
+[真实输出] 崩溃后 host 行数 = 1
+[真实输出] 崩溃后日志行数 = 0          ← 崩溃窗口确实存在
+[真实输出] 恢复后 host 行数 = 1        ← EO：副作用没有重复触发
+[真实输出] 重启后副作用总次数 = 1      ← 计划 1 时这里是 2
 ```
+
+`Tests run: 34, Failures: 0, Errors: 0, Skipped: 0`
 
 ---
 
@@ -86,12 +89,12 @@ Java 17 · Maven · MySQL 8 · JUnit 5 · Jackson · HikariCP
 
 | # | 性质 | 状态 |
 |---|---|---|
-| 1 | prefix continuation | ⬜ 计划 2 |
-| 2 | effect exactly-once | ⬜ 计划 2 |
-| 3 | fork determinism | ⬜ 计划 2 |
-| 4 | checkpoint validity | ⬜ 计划 2 |
-| 5 | consume-once（并发） | ⬜ 计划 3 |
-| 6 | recovery determinism | ⬜ 计划 2 |
+| 1 | prefix continuation | ✅ 计划 2 |
+| 2 | effect exactly-once | ✅ 计划 2 |
+| 3 | fork determinism | ⬜ 计划 3 |
+| 4 | checkpoint validity | ✅ 计划 2 |
+| 5 | consume-once（含并发） | ⬜ 计划 3 |
+| 6 | recovery determinism | ✅ 计划 2 |
 
 > 选这篇论文作为基线的原因：它实测发现 **LangGraph 1.2.9 在 SIGKILL 后是 at-least-once 而不是 exactly-once**，
 > CrewAI 和 pydantic-graph 也各有不符。主流框架都没做对这件事。
@@ -100,8 +103,26 @@ Java 17 · Maven · MySQL 8 · JUnit 5 · Jackson · HikariCP
 
 ## 进度
 
-- [x] **计划 1**：工程骨架、决策日志、故障注入器、缺陷复现
-- [ ] 计划 2：恢复语义（性质 1/3/4/6）+ 副作用 exactly-once（性质 2）
-- [ ] 计划 3：并发 consume-once（性质 5）+ 完整故障矩阵
-- [ ] 计划 4：审批闸门 + 参数快照
-- [ ] 计划 5：演示脚本 + 复盘文档
+- [x] **计划 1**：工程骨架、决策日志、故障注入器、缺陷复现（副作用执行 2 次）
+- [x] **计划 2**：恢复语义内核 —— **PC / EO / CV / RD 四条性质**，缺陷修复（2 次 → 1 次）
+- [ ] **计划 3**：中断与审批闸门 —— FD / CO-c / CO-e / FI 四条性质（含并发）
+- [ ] 计划 4：故障矩阵、演示脚本、复盘文档
+
+## 关键设计决策
+
+| # | 决策 | 理由 |
+|---|---|---|
+| D1 | 日志即真相，恢复靠重放 | LLM 非确定性，重放时可能给出不同决策 |
+| D2 | 只用 MySQL，不用 Redis | 唯一索引是 exactly-once 的最终防线；Redis 只是快路径 |
+| D3 | 幂等键由执行位置派生 | 让 LLM 生成幂等键会因非确定性而失效 |
+| D4 | 工具声明效果类型 | 只读可随便重放，非幂等必须保护 |
+| D5 | consume-once 用数据库 CAS | 论文实测并发恢复会让副作用执行 k 次 |
+| **D7** | **效果账本与副作用同事务** | **唯一能做到真正 exactly-once 的方式** |
+| **D8** | **恢复时重跑前缀，副作用从账本取** | 论文明确允许（memoized replay），实现更简单 |
+| **D9** | **恢复决策必须是纯函数** | RD 性质要求同一份日志得出相同决策 |
+
+> ⚠️ **诚实边界**：D7 只在副作用位于**同一个数据库**时成立。
+> 外部副作用（支付网关、短信）跨网络没有原子提交，只能退化为
+> **at-least-once + 幂等键 + 对方幂等接收**。
+> Temporal 官方文档也是这个立场 —— 它不保证副作用 exactly-once，
+> 只提供 at-least-once 或 at-most-once，要求活动本身幂等。

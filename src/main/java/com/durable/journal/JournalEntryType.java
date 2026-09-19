@@ -8,8 +8,8 @@ public enum JournalEntryType {
      */
     LLM_DECISION,
 
-    /** 工具执行的结果。 */
-    TOOL_RESULT,
+    /** 一个执行步骤的结果（`(workflow_id, step_no, STEP_RESULT)` 唯一）。 */
+    STEP_RESULT,
 
     /** 状态检查点。 */
     CHECKPOINT

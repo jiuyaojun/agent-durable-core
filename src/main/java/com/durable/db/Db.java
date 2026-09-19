@@ -12,6 +12,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Properties;
 
 /**
@@ -24,7 +25,10 @@ public final class Db {
 
     private static final String CONFIG_RESOURCE = "db.properties";
     private static final String SCHEMA_RESOURCE = "schema.sql";
-    private static final String JOURNAL_TABLE = "journal";
+
+    /** 按依赖顺序列出所有表，重建时逐个 DROP。 */
+    private static final List<String> TABLES =
+            List.of("journal", "effect_ledger", "checkpoint", "host");
 
     private static volatile HikariDataSource dataSource;
 
@@ -64,7 +68,9 @@ public final class Db {
         String ddl = readResource(SCHEMA_RESOURCE);
         try (Connection conn = dataSource().getConnection();
              Statement st = conn.createStatement()) {
-            st.execute("DROP TABLE IF EXISTS " + JOURNAL_TABLE);
+            for (String table : TABLES) {
+                st.execute("DROP TABLE IF EXISTS " + table);
+            }
             for (String raw : ddl.split(";")) {
                 String sql = raw.trim();
                 if (!sql.isEmpty()) {

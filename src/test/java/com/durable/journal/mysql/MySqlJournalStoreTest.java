@@ -35,9 +35,9 @@ class MySqlJournalStoreTest {
     @Test
     @DisplayName("按 stepNo 升序读回，payload 原样往返")
     void appendsAndLoadsEntriesInStepOrder() {
-        store.append(JournalEntry.of("wf-1", 1, JournalEntryType.TOOL_RESULT, "{\"v\": 1}"));
+        store.append(JournalEntry.of("wf-1", 1, JournalEntryType.STEP_RESULT, "{\"v\": 1}"));
         store.append(JournalEntry.of("wf-1", 0, JournalEntryType.LLM_DECISION, "{\"tool\": \"a\"}"));
-        store.append(JournalEntry.of("wf-1", 2, JournalEntryType.TOOL_RESULT, "{\"v\": 2}"));
+        store.append(JournalEntry.of("wf-1", 2, JournalEntryType.STEP_RESULT, "{\"v\": 2}"));
 
         List<JournalEntry> loaded = store.load("wf-1");
 
@@ -55,10 +55,10 @@ class MySqlJournalStoreTest {
     @Test
     @DisplayName("同一位置写入第二条会被数据库唯一约束拒绝")
     void rejectsDuplicatePosition() {
-        store.append(JournalEntry.of("wf-1", 0, JournalEntryType.TOOL_RESULT, "{\"v\": 1}"));
+        store.append(JournalEntry.of("wf-1", 0, JournalEntryType.STEP_RESULT, "{\"v\": 1}"));
 
         DuplicateJournalEntryException ex = assertThrows(DuplicateJournalEntryException.class, () ->
-                store.append(JournalEntry.of("wf-1", 0, JournalEntryType.TOOL_RESULT, "{\"v\": 999}")));
+                store.append(JournalEntry.of("wf-1", 0, JournalEntryType.STEP_RESULT, "{\"v\": 999}")));
 
         System.out.println("[真实输出] 重复写入被拒: " + ex.getMessage());
         System.out.println("[真实输出] 表中剩余行数 = " + Db.countRows("SELECT COUNT(*) FROM journal"));
@@ -70,7 +70,7 @@ class MySqlJournalStoreTest {
     @DisplayName("同一步骤的不同类型互不冲突")
     void distinguishesSameStepDifferentType() {
         store.append(JournalEntry.of("wf-1", 0, JournalEntryType.LLM_DECISION, "{}"));
-        store.append(JournalEntry.of("wf-1", 0, JournalEntryType.TOOL_RESULT, "{}"));
+        store.append(JournalEntry.of("wf-1", 0, JournalEntryType.STEP_RESULT, "{}"));
 
         long rows = Db.countRows("SELECT COUNT(*) FROM journal");
         System.out.println("[真实输出] 同步骤两类型后的行数 = " + rows);
@@ -81,8 +81,8 @@ class MySqlJournalStoreTest {
     @Test
     @DisplayName("不同工作流互不干扰")
     void isolatesDifferentWorkflows() {
-        store.append(JournalEntry.of("wf-1", 0, JournalEntryType.TOOL_RESULT, "{\"v\": 1}"));
-        store.append(JournalEntry.of("wf-2", 0, JournalEntryType.TOOL_RESULT, "{\"v\": 2}"));
+        store.append(JournalEntry.of("wf-1", 0, JournalEntryType.STEP_RESULT, "{\"v\": 1}"));
+        store.append(JournalEntry.of("wf-2", 0, JournalEntryType.STEP_RESULT, "{\"v\": 2}"));
 
         long rows = Db.countRows("SELECT COUNT(*) FROM journal");
         System.out.println("[真实输出] 两个工作流后的行数 = " + rows);
@@ -96,13 +96,13 @@ class MySqlJournalStoreTest {
     @Test
     @DisplayName("find 与 exists 行为正确")
     void findAndExistsWork() {
-        store.append(JournalEntry.of("wf-1", 0, JournalEntryType.TOOL_RESULT, "{\"v\": 1}"));
+        store.append(JournalEntry.of("wf-1", 0, JournalEntryType.STEP_RESULT, "{\"v\": 1}"));
 
-        assertTrue(store.exists("wf-1", 0, JournalEntryType.TOOL_RESULT));
+        assertTrue(store.exists("wf-1", 0, JournalEntryType.STEP_RESULT));
         assertFalse(store.exists("wf-1", 0, JournalEntryType.LLM_DECISION));
-        assertFalse(store.exists("wf-2", 0, JournalEntryType.TOOL_RESULT));
+        assertFalse(store.exists("wf-2", 0, JournalEntryType.STEP_RESULT));
 
-        assertTrue(store.find("wf-1", 0, JournalEntryType.TOOL_RESULT).isPresent());
-        assertTrue(store.find("wf-1", 5, JournalEntryType.TOOL_RESULT).isEmpty());
+        assertTrue(store.find("wf-1", 0, JournalEntryType.STEP_RESULT).isPresent());
+        assertTrue(store.find("wf-1", 5, JournalEntryType.STEP_RESULT).isEmpty());
     }
 }
