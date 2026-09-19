@@ -115,51 +115,75 @@ public final class DurableDemo {
         System.out.println("  Agent 请求删除生产机 prod-1，已挂起等待审批。");
         System.out.println("  现在 8 个请求同时到达（重试 / 双击 / 多实例收到同一条消息）……");
 
-        int racers = 8;
-        AtomicInteger fired = new AtomicInteger();
-
-        ExecutorService pool = Executors.newFixedThreadPool(racers);
-        CountDownLatch start = new CountDownLatch(1);
-        List<Future<ResumeOutcome>> futures = new ArrayList<>();
-        for (int i = 0; i < racers; i++) {
-            final int index = i;
-            Callable<ResumeOutcome> task = () -> {
-                start.await();
-                ResumeOutcome outcome = gate.resume(
-                        ResumeCommand.approve("demo-2", 0, "r-" + index, "yes"),
-                        v -> "decision:" + v);
-                if (outcome.isEffectBearing()) {
-                    fired.incrementAndGet();
-                }
-                return outcome;
-            };
-            futures.add(pool.submit(task));
-        }
-        start.countDown();
-
-        int consumed = 0;
-        int inert = 0;
-        for (Future<ResumeOutcome> f : futures) {
-            ResumeOutcome o = f.get(60, TimeUnit.SECONDS);
-            if (o.kind() == ResumeKind.CONSUMED) {
-                consumed++;
-            } else if (o.kind() == ResumeKind.INERT) {
-                inert++;
-            }
-        }
-        pool.shutdown();
-        pool.awaitTermination(10, TimeUnit.SECONDS);
+        RaceTally tally = raceApprovals(gate, 8);
 
         System.out.println();
         System.out.println("  结果：");
-        System.out.println("    放行成功（CONSUMED） = " + consumed + "   （应为 1）");
-        System.out.println("    惰性拒绝（INERT）    = " + inert + "   （应为 7）");
-        System.out.println("    被门控操作执行次数   = " + fired.get() + "   （应为 1）");
+        System.out.println("    放行成功（CONSUMED） = " + tally.consumed() + "   （应为 1）");
+        System.out.println("    惰性拒绝（INERT）    = " + tally.inert() + "   （应为 7）");
+        System.out.println("    被门控操作执行次数   = " + tally.fired() + "   （应为 1）");
         System.out.println("    中断消费计数         = " + gate.consumedCount("demo-2", 0));
         System.out.println();
         System.out.println("  ✅ 论文实测：主流框架在这个场景下会执行 k 次（40 格中 36 格饱和，且跨主机）。");
         System.out.println("     做法是把「消费」做成一条 SQL：UPDATE ... WHERE status='PARKED'，");
         System.out.println("     判断和执行不可分割，所以没有竞争窗口。");
+    }
+
+    /** 并发审批的统计结果。 */
+    private record RaceTally(int consumed, int inert, int fired) {
+    }
+
+    /**
+     * 让 {@code racers} 个线程尽可能同时发起审批，返回结果统计。
+     *
+     * 真实用法是：闸门先裁决，调用方根据裁决决定要不要执行被门控的操作。
+     * 论文的说法是闸门要 "refusing the rest before any node executes"。
+     */
+    private static RaceTally raceApprovals(ApprovalGate gate, int racers) throws Exception {
+        AtomicInteger fired = new AtomicInteger();
+        ExecutorService pool = Executors.newFixedThreadPool(racers);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<ResumeOutcome>> futures = new ArrayList<>();
+            for (int i = 0; i < racers; i++) {
+                futures.add(pool.submit(approvalTask(gate, i, start, fired)));
+            }
+            start.countDown();
+            return tally(futures, fired);
+        } finally {
+            pool.shutdown();
+            pool.awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
+
+    private static Callable<ResumeOutcome> approvalTask(ApprovalGate gate, int index,
+                                                        CountDownLatch start,
+                                                        AtomicInteger fired) {
+        return () -> {
+            start.await();
+            ResumeOutcome outcome = gate.resume(
+                    ResumeCommand.approve("demo-2", 0, "r-" + index, "yes"),
+                    v -> "decision:" + v);
+            if (outcome.isEffectBearing()) {
+                fired.incrementAndGet();
+            }
+            return outcome;
+        };
+    }
+
+    private static RaceTally tally(List<Future<ResumeOutcome>> futures, AtomicInteger fired)
+            throws Exception {
+        int consumed = 0;
+        int inert = 0;
+        for (Future<ResumeOutcome> f : futures) {
+            ResumeOutcome outcome = f.get(60, TimeUnit.SECONDS);
+            if (outcome.kind() == ResumeKind.CONSUMED) {
+                consumed++;
+            } else if (outcome.kind() == ResumeKind.INERT) {
+                inert++;
+            }
+        }
+        return new RaceTally(consumed, inert, fired.get());
     }
 
     // ── 场景 3 ────────────────────────────────────────────────────────────
