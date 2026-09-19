@@ -14,15 +14,26 @@ $ErrorActionPreference = 'Stop'
 $basedir = 'C:\Program Files\MySQL\MySQL Server 8.0'
 $root    = 'C:\Users\xuchenxiang\agent-durable-devdb'
 $port    = 3307
+$dataDir = "$root\data"
+# 初始化完成的标志：mysqld --initialize 会建出这个目录。
+# 不能只用「data 目录是否存在」判断 —— 目录可能在初始化中途就被创建，
+# 那样重跑时会误判为「已初始化」，然后去启动一个空的数据目录。
+$marker  = "$dataDir\mysql"
 
 if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) {
     Write-Host "实例已在运行（端口 $port），无需重复启动。"
     exit 0
 }
 
-if (-not (Test-Path "$root\data")) {
-    Write-Host "首次运行：初始化数据目录..."
-    New-Item -ItemType Directory -Path "$root\data" -Force | Out-Null
+if (-not (Test-Path $marker)) {
+    Write-Host "数据目录未初始化（或上次初始化未完成），开始初始化..."
+
+    # 清掉可能残留的半成品，保证幂等
+    if (Test-Path $dataDir) {
+        Remove-Item $dataDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+
     $ini = @(
         '[mysqld]',
         'basedir=C:/Program Files/MySQL/MySQL Server 8.0',
@@ -36,16 +47,38 @@ if (-not (Test-Path "$root\data")) {
     )
     Set-Content -Path "$root\my.ini" -Value $ini -Encoding ASCII
 
-    & "$basedir\bin\mysqld.exe" --defaults-file="$root\my.ini" --initialize-insecure --console 2>&1 |
-        Select-Object -Last 3
+    # mysqld 会把启动日志写到 stderr。PowerShell 5.1 在 Stop 偏好下会把原生命令的
+    # stderr 输出当成终止性错误，导致脚本在初始化完成前就中止 —— 这是个真实的坑，
+    # 只在「数据目录不存在」的首次运行时才会暴露。
+    # 所以这里临时放宽偏好，并且不用 --console（让它写进 log-error 指定的文件）。
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & "$basedir\bin\mysqld.exe" --defaults-file="$root\my.ini" --initialize-insecure 2>&1 |
+            Select-Object -Last 3
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
+    if (-not (Test-Path $marker)) {
+        Write-Host "初始化失败。"
+        if (Test-Path "$root\error.log") {
+            Write-Host "--- error.log 末尾 ---"
+            Get-Content "$root\error.log" -Tail 20
+        }
+        exit 1
+    }
+    Write-Host "初始化完成。"
 }
 
 Write-Host "启动 mysqld..."
-Start-Process -FilePath "$basedir\bin\mysqld.exe" -ArgumentList "--defaults-file=$root\my.ini" -WindowStyle Hidden
+Start-Process -FilePath "$basedir\bin\mysqld.exe" `
+    -ArgumentList "--defaults-file=$root\my.ini" -WindowStyle Hidden
 
 $ready = $false
-for ($i = 0; $i -lt 40; $i++) {
-    Start-Sleep -Milliseconds 800
+for ($i = 0; $i -lt 60; $i++) {
+    Start-Sleep -Milliseconds 700
     if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) {
         $ready = $true
         break
@@ -54,7 +87,9 @@ for ($i = 0; $i -lt 40; $i++) {
 
 if (-not $ready) {
     Write-Host "启动失败，错误日志末尾："
-    Get-Content "$root\error.log" -Tail 20
+    if (Test-Path "$root\error.log") {
+        Get-Content "$root\error.log" -Tail 20
+    }
     exit 1
 }
 
