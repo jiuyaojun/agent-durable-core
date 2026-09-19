@@ -43,7 +43,7 @@
 mvn test
 ```
 
-预期：`Tests run: 61, Failures: 0, Errors: 0, Skipped: 0` + `BUILD SUCCESS`
+预期：`Tests run: 62, Failures: 0, Errors: 0, Skipped: 0` + `BUILD SUCCESS`
 
 ### 3. 现场演示（面试时可直接跑）
 
@@ -128,12 +128,12 @@ Java 17 · Maven · MySQL 8 · JUnit 5 · Jackson · HikariCP
 - [x] **计划 3**：中断与审批闸门 —— FD / CO-c / CO-e / FI，含并发 consume-once
 - [x] **计划 4**：审批参数快照（TOCTOU 防护）、故障矩阵、演示脚本、复盘文档
 
-**61 个测试全部通过。** 测试分布：
+**62 个测试全部通过。** 测试分布：
 
 | 类别 | 测试类 |
 |---|---|
 | 契约（七条性质） | `PrefixContinuationTest` `EffectExactlyOnceTest` `ForkDeterminismTest` `CheckpointValidityTest` `ConsumeOnceTest` `RecoveryDeterminismTest` `ApprovalBindingTest` |
-| 故障矩阵与并发 | `FaultMatrixTest` `ConcurrentResumeTest` |
+| 故障矩阵 / 并发 / 真实强杀 | `FaultMatrixTest` `ConcurrentResumeTest` `RealProcessKillTest` |
 | 组件 | `EffectLedgerTest` `DurableExecutorCrashTest` `MySqlJournalStoreTest` `ApprovalGateTest` `CrashInjectorTest` `DatabaseConnectivityTest` |
 
 ## 关键设计决策
