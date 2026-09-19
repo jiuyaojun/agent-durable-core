@@ -49,3 +49,41 @@ CREATE TABLE IF NOT EXISTS host (
     created_by VARCHAR(64)  NOT NULL,
     PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 人工审批的中断点。一个 (workflow_id, step_no) 只能有一个中断。
+-- status='PARKED' 等待审批；status='CONSUMED' 已被某次 resume 消费。
+-- CO-c 的落点：抢占用的是条件更新 UPDATE ... WHERE status='PARKED'。
+CREATE TABLE IF NOT EXISTS interrupt (
+    workflow_id VARCHAR(64)  NOT NULL,
+    step_no     INT          NOT NULL,
+    status      VARCHAR(16)  NOT NULL,
+    consumed_by VARCHAR(64)  NULL,
+    question    JSON         NOT NULL,
+    created_at  TIMESTAMP(3) NOT NULL,
+    PRIMARY KEY (workflow_id, step_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 每一次 resume 尝试都留痕（含被惰性拒绝的）。
+-- 论文指出：只做幂等的话副作用计数是对的，但「审批轨迹」会是错的 ——
+-- 所以被拒绝的投递也必须记录，否则审计不成立。
+CREATE TABLE IF NOT EXISTS resume_attempt (
+    workflow_id VARCHAR(64)  NOT NULL,
+    step_no     INT          NOT NULL,
+    resume_id   VARCHAR(64)  NOT NULL,
+    fork_intent TINYINT(1)   NOT NULL,
+    branch_id   VARCHAR(64)  NULL,
+    value       JSON         NOT NULL,
+    outcome     VARCHAR(16)  NOT NULL,
+    created_at  TIMESTAMP(3) NOT NULL,
+    PRIMARY KEY (workflow_id, step_no, resume_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 分叉分支的产出。同一 branchId 重复投递复用同一产出（FD 的确定性）。
+CREATE TABLE IF NOT EXISTS branch (
+    workflow_id VARCHAR(64)  NOT NULL,
+    step_no     INT          NOT NULL,
+    branch_id   VARCHAR(64)  NOT NULL,
+    outcome     JSON         NOT NULL,
+    created_at  TIMESTAMP(3) NOT NULL,
+    PRIMARY KEY (workflow_id, step_no, branch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

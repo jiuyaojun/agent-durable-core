@@ -28,7 +28,8 @@ public final class Db {
 
     /** 按依赖顺序列出所有表，重建时逐个 DROP。 */
     private static final List<String> TABLES =
-            List.of("journal", "effect_ledger", "checkpoint", "host");
+            List.of("journal", "effect_ledger", "checkpoint", "host",
+                    "branch", "resume_attempt", "interrupt");
 
     private static volatile HikariDataSource dataSource;
 

@@ -91,22 +91,34 @@ Java 17 · Maven · MySQL 8 · JUnit 5 · Jackson · HikariCP
 |---|---|---|
 | 1 | prefix continuation | ✅ 计划 2 |
 | 2 | effect exactly-once | ✅ 计划 2 |
-| 3 | fork determinism | ⬜ 计划 3 |
+| 3 | fork determinism | ✅ 计划 3 |
 | 4 | checkpoint validity | ✅ 计划 2 |
-| 5 | consume-once（含并发） | ⬜ 计划 3 |
+| 5 | consume-once（含并发） | ✅ 计划 3 |
 | 6 | recovery determinism | ✅ 计划 2 |
+| 7 | fork-intent expressibility | ✅ 计划 3 |
 
 > 选这篇论文作为基线的原因：它实测发现 **LangGraph 1.2.9 在 SIGKILL 后是 at-least-once 而不是 exactly-once**，
 > CrewAI 和 pydantic-graph 也各有不符。主流框架都没做对这件事。
+
+### 最能打的一个对照实验
+
+论文实测：并发恢复一个挂起的中断，主流框架会让被门控的操作执行 **k 次**
+（40 格中 36 格饱和度为 1.0，且故障跨主机）。本项目同场景实测（连跑 5 次稳定）：
+
+```
+[真实输出] 并发数 = 8
+[真实输出] CONSUMED = 1，INERT = 7
+[真实输出] 被门控操作执行次数 = 1
+```
 
 ---
 
 ## 进度
 
 - [x] **计划 1**：工程骨架、决策日志、故障注入器、缺陷复现（副作用执行 2 次）
-- [x] **计划 2**：恢复语义内核 —— **PC / EO / CV / RD 四条性质**，缺陷修复（2 次 → 1 次）
-- [ ] **计划 3**：中断与审批闸门 —— FD / CO-c / CO-e / FI 四条性质（含并发）
-- [ ] 计划 4：故障矩阵、演示脚本、复盘文档
+- [x] **计划 2**：恢复语义内核 —— PC / EO / CV / RD，缺陷修复（2 次 → 1 次）
+- [x] **计划 3**：中断与审批闸门 —— FD / CO-c / CO-e / FI，含并发 consume-once
+- [ ] **计划 4**：审批参数快照（tool_args_drift）、故障矩阵、演示脚本、复盘文档
 
 ## 关键设计决策
 
