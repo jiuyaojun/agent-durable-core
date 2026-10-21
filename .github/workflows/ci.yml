@@ -1,0 +1,80 @@
+name: CI
+
+# 目标：clone 下来就能被验证。
+#
+# 测试通过 src/main/resources/db.properties 连接 127.0.0.1:3307/durable_test，
+# 所以这里把 MySQL 容器内的 3306 映射到 runner 的 3307，
+# 让 CI 复用与本地 devdb 完全相同的连接串 —— db.properties 一个字都不改。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build & test (JDK 17 / MySQL 8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      mysql:
+        # mysql:8.0 —— 与本地 devdb（MySQL 8.0.41）大版本一致；
+        # DatabaseConnectivityTest 断言 VERSION() 以 "8." 开头，不能升到 9.x。
+        # 镜像默认 character_set_server=utf8mb4 / collation_server=utf8mb4_0900_ai_ci，
+        # 与 scripts/devdb-start.ps1 里 my.ini 的显式配置相同，因此不需要额外设置字符集。
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: durable_root_pwd
+          MYSQL_DATABASE: durable_test
+          # 镜像会把该账号建成 'durable'@'%'：经由端口映射连进来的客户端
+          # 在容器里看到的来源地址不是 127.0.0.1，必须是 % 才能认证通过。
+          MYSQL_USER: durable
+          MYSQL_PASSWORD: durable_dev_pwd
+          # db.url 里声明了 serverTimezone=Asia/Shanghai，容器时区尽量保持一致。
+          TZ: Asia/Shanghai
+        ports:
+          # 容器 3306 -> runner 3307，匹配 db.properties 的端口。
+          - "3307:3306"
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+          --health-start-period=30s
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      # 只等端口可连，不做任何需要 docker CLI 或 job 上下文变量的事。
+      # 理由：service container 的 health-check 已经保证 MySQL 就绪；
+      # 再叠加一层 `docker exec` 会引入本机无法验证的依赖（本机没有 Docker），
+      # 而它跑在 mvn 之前 —— 一旦失败，测试根本不会开始。
+      # 时区与字符集不需要在这里校准：代码里没有 NOW()/CURRENT_TIMESTAMP 参与断言，
+      # 且 mysql:8.0 镜像默认字符集与本地 my.ini 一致（schema.sql 每张表也显式声明 utf8mb4）。
+      - name: Wait for MySQL port
+        run: |
+          for attempt in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/3307) 2>/dev/null; then
+              echo "MySQL 已可连接：127.0.0.1:3307（第 $attempt 次尝试）"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "MySQL 在 60s 内不可连接" >&2
+          exit 1
+
+      - name: Run tests
+        run: mvn -B -ntp test

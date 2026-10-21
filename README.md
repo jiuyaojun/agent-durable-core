@@ -1,5 +1,7 @@
 # agent-durable-core
 
+[![CI](https://github.com/jiuyaojun/agent-durable-core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jiuyaojun/agent-durable-core/actions/workflows/ci.yml)
+
 > 一个 Java 实现的 **Agent 工具调用持久化执行内核**。
 >
 > 解决的问题：**当 LLM 是非确定性的、而工具调用有真实副作用时，如何保证一次 Agent 任务崩溃后正确恢复，且副作用恰好执行一次。**
@@ -36,6 +38,11 @@
 > 用独立实例（端口 **3307**）而不是系统那个 3306 的 MySQL，原因是不依赖未知的 root 密码，
 > 且数据目录独立、可随时删除重建。数据目录：`C:\Users\xuchenxiang\agent-durable-devdb`
 > 停止：`.\scripts\devdb-stop.ps1`
+
+> **本地 vs CI**：两边用的是同一份 `db.properties`（`127.0.0.1:3307/durable_test`），
+> 只是 MySQL 的来源不同 —— 本地必须先跑上面的 `scripts/devdb-start.ps1`；
+> CI 由 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 里的 MySQL 8 service container 提供
+> （容器 3306 映射到 runner 3307），不需要这个脚本，也不需要改连接串。
 
 ### 2. 跑测试
 
